@@ -28,10 +28,18 @@ func randJobId() string {
 	return string(b)
 }
 
+type PanicInfo struct {
+	ErrHash  string
+	JobName  string
+	ErrorStr []string
+}
+
 type JobManager struct {
-	AllJobs    sync.Map
-	PanicExist bool
-	PanicJson  *fj.FastJson
+	AllJobs sync.Map
+
+	//PanicExist bool
+	PanicMap sync.Map
+	//PanicJson  *fj.FastJson
 
 	logger *logrus.Logger
 }
@@ -86,13 +94,13 @@ func (jm *JobManager) GetGBJob(jobid string) *Job {
 func (jm *JobManager) CloseAndDeleteJob(jobid string) {
 	jobh_, ok := jm.AllJobs.Load(jobid)
 	if ok {
-		jobh_.(*Job).status = STATUS_CLOSING
+		jobh_.(*Job).Status = STATUS_CLOSING
 	}
 }
 
 func (jm *JobManager) CloseAndDeleteAllJobs() {
 	jm.AllJobs.Range(func(_, value interface{}) bool {
-		value.(*Job).status = STATUS_CLOSING
+		value.(*Job).Status = STATUS_CLOSING
 		return true
 	})
 }
@@ -105,7 +113,7 @@ func (jm *JobManager) ScheduleJob() {
 
 }
 
-func (jm *JobManager) startJob(jobName string, jobType JobType, targetCycles int64, interval int64, processFn func(), chkContinueFn func() bool, afCloseFn func()) (jobId string, err error) {
+func (jm *JobManager) StartJob(jobName string, jobType JobType, targetCycles int64, interval int64, processFn func(), chkContinueFn func(*Job) bool, afCloseFn func(*Job)) (jobId string, err error) {
 	if jobType != TYPE_PANIC_REDO && jobType != TYPE_PANIC_RETURN {
 		return "", errors.New("job type error")
 	}
@@ -134,10 +142,10 @@ func (jm *JobManager) startJob(jobName string, jobType JobType, targetCycles int
 
 func (jm *JobManager) recordPanicStack(jobName string, panicstr string, stack string) {
 
-	errors := []string{panicstr}
+	errorsInfo := []string{panicstr}
 	errstr := panicstr
 
-	errors = append(errors, "last err unix-time:"+strconv.FormatInt(time.Now().Unix(), 10))
+	errorsInfo = append(errorsInfo, "last err unix-time:"+strconv.FormatInt(time.Now().Unix(), 10))
 
 	lines := strings.Split(stack, "\n")
 	maxlines := len(lines)
@@ -149,7 +157,7 @@ func (jm *JobManager) recordPanicStack(jobName string, panicstr string, stack st
 		for i := 2; i < maxlines; i = i + 2 {
 			fomatstr := strings.ReplaceAll(lines[i], "	", "")
 			errstr = errstr + "#" + fomatstr
-			errors = append(errors, fomatstr)
+			errorsInfo = append(errorsInfo, fomatstr)
 		}
 	}
 
@@ -157,11 +165,18 @@ func (jm *JobManager) recordPanicStack(jobName string, panicstr string, stack st
 	h.Write([]byte(errstr))
 	errhash := hex.EncodeToString(h.Sum(nil))
 
-	jm.PanicExist = true
-	//jm.PanicJson.SetStringArray(errors, "errors", jb.jobName, errhash)
+	_, exist := jm.PanicMap.Load(errhash)
+	if !exist {
+		panicInfo := &PanicInfo{
+			ErrHash:  errhash,
+			JobName:  jobName,
+			ErrorStr: errorsInfo,
+		}
+		jm.PanicMap.Store(errhash, panicInfo)
+	}
 
 	if jm.logger != nil {
-		jm.logger.Error("bgjob-catch-panic: ", " jobname:", jobName, " errhash:", errhash, " errors:", errors)
+		jm.logger.Error("bgjob-catch-panic: ", " jobname:", jobName, " errhash:", errhash, " errors:", errorsInfo)
 	}
 
 }

@@ -21,51 +21,52 @@ const (
 	STATUS_CLOSING RunType = "closing"
 )
 
-const PANIC_REDO_SECS = 60
+const PANIC_REDO_SECS = 30
 
 type Job struct {
 	//manual init data
-	jobId        string
-	jobName      string
-	interval     int64
-	targetCycles int64
-	jobType      JobType
+	JobId        string
+	JobName      string
+	Interval     int64
+	TargetCycles int64
+	JobType      JobType
 
+	//callback
 	processFn     func()
-	chkContinueFn func() bool
-	afCloseFn     func()
+	chkContinueFn func(job *Job) bool
+	afCloseFn     func(job *Job)
 
-	createTime  int64
-	lastRuntime int64
+	//update data in running
+	CreateTime  int64
+	LastRuntime int64
 	//info        *fj.FastJson
+	Status RunType
+	Cycles int64
 
-	status RunType
-	cycles int64
-
+	//signal channel
 	runToken     chan struct{}
 	returnSignal chan struct{}
 
-	context interface{}
-
+	//reference
 	jobMgr *JobManager
 }
 
-func newJob(jobId string, jobName string, interval int64, targetCycles int64, jobType JobType, processFn func(), chkContinueFn func() bool, afCloseFn func(), jm *JobManager) *Job {
+func newJob(jobId string, jobName string, targetCycles int64, interval int64, jobType JobType, processFn func(), chkContinueFn func(*Job) bool, afCloseFn func(*Job), jm *JobManager) *Job {
 	return &Job{
-		jobId:        jobId,
-		jobName:      jobName,
-		interval:     interval,
-		targetCycles: targetCycles,
-		jobType:      jobType,
+		JobId:        jobId,
+		JobName:      jobName,
+		Interval:     interval,
+		TargetCycles: targetCycles,
+		JobType:      jobType,
 
 		processFn:     processFn,
 		chkContinueFn: chkContinueFn,
 		afCloseFn:     afCloseFn,
 
-		createTime:  time.Now().Unix(),
-		lastRuntime: 0,
-		status:      STATUS_WAITING,
-		cycles:      0,
+		CreateTime:  time.Now().Unix(),
+		LastRuntime: 0,
+		Status:      STATUS_WAITING,
+		Cycles:      0,
 
 		runToken:     make(chan struct{}),
 		returnSignal: make(chan struct{}),
@@ -75,7 +76,6 @@ func newJob(jobId string, jobName string, interval int64, targetCycles int64, jo
 }
 
 func (j *Job) run() {
-	j.runToken <- struct{}{}
 	go func() {
 		for {
 			select {
@@ -97,9 +97,9 @@ func (j *Job) run() {
 								ErrStr = "recovered (default) panic"
 							}
 
-							j.jobMgr.recordPanicStack(j.jobName, ErrStr, string(debug.Stack()))
+							j.jobMgr.recordPanicStack(j.JobName, ErrStr, string(debug.Stack()))
 							//check redo
-							if j.jobType == TYPE_PANIC_REDO {
+							if j.JobType == TYPE_PANIC_REDO {
 								time.Sleep(PANIC_REDO_SECS * time.Second)
 								j.runToken <- struct{}{}
 							} else {
@@ -113,10 +113,12 @@ func (j *Job) run() {
 
 					//check next run time
 					nowUnixTime := time.Now().Unix()
-					toSleepSecs := j.lastRuntime + j.interval - nowUnixTime
+					toSleepSecs := j.LastRuntime + j.Interval - nowUnixTime
 					if toSleepSecs > 0 {
 						time.Sleep(time.Duration(toSleepSecs) * time.Second)
 					}
+					//put runToken back
+					j.runToken <- struct{}{}
 				}()
 			case <-j.returnSignal:
 				if j.afCloseFn != nil {
@@ -134,53 +136,51 @@ func (j *Job) run() {
 							default:
 								ErrStr = "recovered (default) panic"
 							}
-							j.jobMgr.recordPanicStack(j.jobName, ErrStr, string(debug.Stack()))
+							j.jobMgr.recordPanicStack(j.JobName, ErrStr, string(debug.Stack()))
 						}
 					}()
-					j.afCloseFn()
+					j.afCloseFn(j)
 				}
-				j.jobMgr.AllJobs.Delete(j.jobId)
+				j.jobMgr.AllJobs.Delete(j.JobId)
 				return
 			}
 		}
 	}()
+	j.runToken <- struct{}{}
 }
 
 func (j *Job) runOneCycle() {
-	if j.status == STATUS_CLOSING {
+	if j.Status == STATUS_CLOSING {
 		j.returnSignal <- struct{}{}
 		return
 	}
-	if j.chkContinueFn != nil && !j.chkContinueFn() {
+	if j.chkContinueFn != nil && !j.chkContinueFn(j) {
 		//job finish
 		j.returnSignal <- struct{}{}
 		return
 	}
 
-	j.lastRuntime = time.Now().Unix()
-	j.status = STATUS_RUNNING
+	j.LastRuntime = time.Now().Unix()
+	j.Status = STATUS_RUNNING
 
 	//run
 	j.processFn()
 
 	//this cycle finish
-	j.status = STATUS_WAITING
-	j.cycles++
-	if j.targetCycles > 0 && j.cycles >= j.targetCycles {
+	j.Status = STATUS_WAITING
+	j.Cycles++
+	if j.TargetCycles > 0 && j.Cycles >= j.TargetCycles {
 		//job finish
 		j.returnSignal <- struct{}{}
 		return
 	}
-	if j.status == STATUS_CLOSING {
+	if j.Status == STATUS_CLOSING {
 		j.returnSignal <- struct{}{}
 		return
 	}
-	if j.chkContinueFn != nil && !j.chkContinueFn() {
+	if j.chkContinueFn != nil && !j.chkContinueFn(j) {
 		//job finish
 		j.returnSignal <- struct{}{}
 		return
 	}
-
-	//put runToken back
-	j.runToken <- struct{}{}
 }
