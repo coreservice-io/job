@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
-	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,20 +12,6 @@ import (
 
 	"github.com/sirupsen/logrus"
 )
-
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
-
-var letterRunes = []rune("abcdefghijklmnopqrstuvwxyz")
-
-func randJobId() string {
-	b := make([]rune, 8)
-	for i := range b {
-		b[i] = letterRunes[rand.Intn(len(letterRunes))]
-	}
-	return string(b)
-}
 
 type PanicInfo struct {
 	ErrHash  string
