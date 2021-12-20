@@ -22,9 +22,7 @@ type PanicInfo struct {
 type JobManager struct {
 	AllJobs sync.Map
 
-	//PanicExist bool
 	PanicMap sync.Map
-	//PanicJson  *fj.FastJson
 
 	logger *logrus.Logger
 }
@@ -39,6 +37,8 @@ func New() *JobManager {
 		TimestampFormat: "2006-01-02 15:04:05",
 	})
 	jm.logger.SetLevel(logrus.InfoLevel)
+
+	jm.printPanic()
 
 	return jm
 }
@@ -67,7 +67,7 @@ func (jm *JobManager) LogTest() {
 	jm.logger.Errorln("log error")
 }
 
-func (jm *JobManager) GetGBJob(jobid string) *Job {
+func (jm *JobManager) GetJob(jobid string) *Job {
 	jobh_, ok := jm.AllJobs.Load(jobid)
 	if ok {
 		return jobh_.(*Job)
@@ -90,15 +90,20 @@ func (jm *JobManager) CloseAndDeleteAllJobs() {
 	})
 }
 
-func (jm *JobManager) RunOnceJob() {
-
+//StartJob_Panic_Redo Start a background job which run periodically at given intervals.
+//It will restart if panic happen.
+//Job will run forever if cycleLimit is 0.
+func (jm *JobManager) StartJob_Panic_Redo(jobName string, cycleLimit int64, interval int64, processFn func(), chkContinueFn func(*Job) bool, afCloseFn func(*Job)) (jobId string, err error) {
+	return jm.startJob(jobName, TYPE_PANIC_REDO, cycleLimit, interval, processFn, chkContinueFn, afCloseFn)
 }
 
-func (jm *JobManager) ScheduleJob() {
-
+//StartJob_Panic_Return Start a background job which run periodically at given intervals.
+//It will stop if panic happen.
+func (jm *JobManager) StartJob_Panic_Return(jobName string, cycleLimit int64, interval int64, processFn func(), chkContinueFn func(*Job) bool, afCloseFn func(*Job)) (jobId string, err error) {
+	return jm.startJob(jobName, TYPE_PANIC_RETURN, cycleLimit, interval, processFn, chkContinueFn, afCloseFn)
 }
 
-func (jm *JobManager) StartJob(jobName string, jobType JobType, targetCycles int64, interval int64, processFn func(), chkContinueFn func(*Job) bool, afCloseFn func(*Job)) (jobId string, err error) {
+func (jm *JobManager) startJob(jobName string, jobType JobType, targetCycles int64, interval int64, processFn func(), chkContinueFn func(*Job) bool, afCloseFn func(*Job)) (jobId string, err error) {
 	if jobType != TYPE_PANIC_REDO && jobType != TYPE_PANIC_RETURN {
 		return "", errors.New("job type error")
 	}
@@ -150,18 +155,32 @@ func (jm *JobManager) recordPanicStack(jobName string, panicstr string, stack st
 	h.Write([]byte(errstr))
 	errhash := hex.EncodeToString(h.Sum(nil))
 
-	_, exist := jm.PanicMap.Load(errhash)
-	if !exist {
-		panicInfo := &PanicInfo{
-			ErrHash:  errhash,
-			JobName:  jobName,
-			ErrorStr: errorsInfo,
-		}
-		jm.PanicMap.Store(errhash, panicInfo)
+	panicInfo := &PanicInfo{
+		ErrHash:  errhash,
+		JobName:  jobName,
+		ErrorStr: errorsInfo,
 	}
+	jm.PanicMap.Store(errhash, panicInfo)
 
-	if jm.logger != nil {
-		jm.logger.Error("bgjob-catch-panic: ", " jobname:", jobName, " errhash:", errhash, " errors:", errorsInfo)
-	}
+	//if jm.logger != nil {
+	//	jm.logger.Error("bgjob-catch-panic: ", " jobname:", jobName, " errhash:", errhash, " errors:", errorsInfo)
+	//}
+}
 
+func (jm *JobManager) printPanic() {
+	_, err := jm.StartJob_Panic_Redo("UJob PrintPanic", 0, 300, func() {
+		jm.PanicMap.Range(func(key, value interface{}) bool {
+			panicInfo, ok := value.(*PanicInfo)
+			if !ok {
+				return true
+			}
+
+			jm.logger.Error("bgjob-catch-panic:", " jobname:", panicInfo.JobName, " errors:", panicInfo.ErrorStr)
+
+			jm.PanicMap.Delete(key)
+			return true
+		})
+	}, nil, nil)
+
+	jm.logger.Fatalln("UJob printPanic error:", err)
 }
