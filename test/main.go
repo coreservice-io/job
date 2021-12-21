@@ -15,11 +15,11 @@ func main() {
 
 	//Redo job
 	count := 0
-	jm.StartJob_Panic_Redo("redo job", 0, 5, func() {
+	jm.StartJob_Panic_Redo("redo job", 12, 1, func() {
 
 		count++
 		log.Println("redo job run", count)
-		if count%5 == 0 {
+		if count%10 == 0 {
 			div(3, 0)
 		}
 

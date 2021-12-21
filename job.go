@@ -100,6 +100,7 @@ func (j *Job) run() {
 							j.jobMgr.recordPanicStack(j.JobName, ErrStr, string(debug.Stack()))
 							//check redo
 							if j.JobType == TYPE_PANIC_REDO {
+								j.Status = STATUS_WAITING
 								time.Sleep(PANIC_REDO_SECS * time.Second)
 								j.runToken <- struct{}{}
 							} else {
@@ -109,7 +110,11 @@ func (j *Job) run() {
 					}()
 
 					//do job
-					j.runOneCycle()
+					isGoOn := j.runOneCycle()
+					if !isGoOn {
+						j.returnSignal <- struct{}{}
+						return
+					}
 
 					//check next run time
 					nowUnixTime := time.Now().Unix()
@@ -149,15 +154,13 @@ func (j *Job) run() {
 	j.runToken <- struct{}{}
 }
 
-func (j *Job) runOneCycle() {
+//runOneCycle the job will stop if return false
+func (j *Job) runOneCycle() bool {
 	if j.Status == STATUS_CLOSING {
-		j.returnSignal <- struct{}{}
-		return
+		return false
 	}
 	if j.chkContinueFn != nil && !j.chkContinueFn(j) {
-		//job finish
-		j.returnSignal <- struct{}{}
-		return
+		return false
 	}
 
 	j.LastRuntime = time.Now().Unix()
@@ -170,17 +173,14 @@ func (j *Job) runOneCycle() {
 	j.Status = STATUS_WAITING
 	j.Cycles++
 	if j.TargetCycles > 0 && j.Cycles >= j.TargetCycles {
-		//job finish
-		j.returnSignal <- struct{}{}
-		return
+		return false
 	}
 	if j.Status == STATUS_CLOSING {
-		j.returnSignal <- struct{}{}
-		return
+		return false
 	}
 	if j.chkContinueFn != nil && !j.chkContinueFn(j) {
-		//job finish
-		j.returnSignal <- struct{}{}
-		return
+		return false
 	}
+
+	return true
 }

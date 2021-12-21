@@ -174,13 +174,13 @@ func (jm *JobManager) printPanic() {
 			if !ok {
 				return true
 			}
-
 			jm.logger.Error("bgjob-catch-panic:", " jobname:", panicInfo.JobName, " errors:", panicInfo.ErrorStr)
-
 			jm.PanicMap.Delete(key)
 			return true
 		})
 	}, nil, nil)
 
-	jm.logger.Fatalln("UJob printPanic error:", err)
+	if err != nil {
+		jm.logger.Fatalln("UJob printPanic error:", err)
+	}
 }
