@@ -11,22 +11,33 @@ func div(a, b int) int {
 }
 
 func main() {
-	jm := UJob.New()
-
-	//Redo job
 	count := 0
-	jm.StartJob_Panic_Redo("redo job", 12, 1, func() {
+	job := UJob.StartLoopJob(
+		func() {
+			count++
+			log.Println(count)
+			if count%6 == 0 {
+				div(3, 0)
+			}
+		},
+		func(panicInfo *UJob.PanicInfoInst) {
+			log.Println("panic catch")
+			log.Println(panicInfo.ErrHash)
+			for _, v := range panicInfo.ErrorStr {
+				log.Println(v)
+			}
+		},
+		2, UJob.TYPE_PANIC_REDO, nil, func(inst *UJob.Job) {
+			log.Println("finish", "cycle", inst.Cycles)
+		},
+	)
 
-		count++
-		log.Println("redo job run", count)
-		if count%10 == 0 {
-			div(3, 0)
-		}
+	_ = job
 
-		if count == 66 {
-			panic("some panic")
-		}
-	}, nil, nil)
+	//go func() {
+	//	time.Sleep(10 * time.Second)
+	//	job.Stop()
+	//}()
 
 	time.Sleep(1 * time.Hour)
 }

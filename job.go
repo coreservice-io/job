@@ -1,8 +1,13 @@
 package UJob
 
 import (
+	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"runtime"
 	"runtime/debug"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -18,93 +23,93 @@ type RunType string
 const (
 	STATUS_RUNNING RunType = "running"
 	STATUS_WAITING RunType = "waiting"
-	STATUS_CLOSING RunType = "closing"
 )
 
 const PANIC_REDO_SECS = 30
 
 type Job struct {
 	//manual init data
-	JobId        string
-	JobName      string
-	Interval     int64
-	TargetCycles int64
-	JobType      JobType
+	Interval int64
+	JobType  JobType
+
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	//callback
 	processFn     func()
 	chkContinueFn func(job *Job) bool
 	afCloseFn     func(job *Job)
+	onPanic       func(panicInfo *PanicInfoInst)
 
 	//update data in running
 	CreateTime  int64
 	LastRuntime int64
-	//info        *fj.FastJson
-	Status RunType
-	Cycles int64
+	Status      RunType
+	Cycles      int64
 
 	//signal channel
-	runToken     chan struct{}
-	returnSignal chan struct{}
-
-	//reference
-	jobMgr *JobManager
+	runToken   chan struct{}
+	stopSignal chan struct{}
 }
 
-func newJob(jobId string, jobName string, targetCycles int64, interval int64, jobType JobType, processFn func(), chkContinueFn func(*Job) bool, afCloseFn func(*Job), jm *JobManager) *Job {
-	return &Job{
-		JobId:        jobId,
-		JobName:      jobName,
-		Interval:     interval,
-		TargetCycles: targetCycles,
-		JobType:      jobType,
+type PanicInfoInst struct {
+	ErrHash  string
+	ErrorStr []string
+}
 
+func StartLoopJob(processFn func(), onPanic func(panicInfo *PanicInfoInst), interval int64, jobType JobType, chkContinueFn func(*Job) bool, afCloseFn func(*Job)) *Job {
+	ctx, cancel := context.WithCancel(context.Background())
+	j := &Job{
+		Interval:      interval,
+		JobType:       jobType,
+		ctx:           ctx,
+		cancel:        cancel,
 		processFn:     processFn,
 		chkContinueFn: chkContinueFn,
 		afCloseFn:     afCloseFn,
-
-		CreateTime:  time.Now().Unix(),
-		LastRuntime: 0,
-		Status:      STATUS_WAITING,
-		Cycles:      0,
-
-		runToken:     make(chan struct{}),
-		returnSignal: make(chan struct{}),
-
-		jobMgr: jm,
+		onPanic:       onPanic,
+		CreateTime:    time.Now().Unix(),
+		LastRuntime:   0,
+		Status:        STATUS_WAITING,
+		runToken:      make(chan struct{}),
 	}
-}
 
-func (j *Job) run() {
 	go func() {
 		for {
 			select {
+			case <-ctx.Done():
+				if afCloseFn != nil {
+					afCloseFn(j)
+				}
+				return // returning not to leak the goroutine
 			case <-j.runToken:
 				go func() {
 					// if panic happen
 					defer func() {
 						if err := recover(); err != nil {
 							//record panic
-							var ErrStr string
+							var errStr string
 							switch e := err.(type) {
 							case string:
-								ErrStr = e
+								errStr = e
 							case runtime.Error:
-								ErrStr = e.Error()
+								errStr = e.Error()
 							case error:
-								ErrStr = e.Error()
+								errStr = e.Error()
 							default:
-								ErrStr = "recovered (default) panic"
+								errStr = "recovered (default) panic"
 							}
 
-							j.jobMgr.recordPanicStack(j.JobName, ErrStr, string(debug.Stack()))
+							if onPanic != nil {
+								onPanic(handlePanicStack(errStr, string(debug.Stack())))
+							}
 							//check redo
 							if j.JobType == TYPE_PANIC_REDO {
 								j.Status = STATUS_WAITING
 								time.Sleep(PANIC_REDO_SECS * time.Second)
 								j.runToken <- struct{}{}
 							} else {
-								j.returnSignal <- struct{}{}
+								cancel()
 							}
 						}
 					}()
@@ -112,7 +117,7 @@ func (j *Job) run() {
 					//do job
 					isGoOn := j.runOneCycle()
 					if !isGoOn {
-						j.returnSignal <- struct{}{}
+						cancel()
 						return
 					}
 
@@ -125,40 +130,21 @@ func (j *Job) run() {
 					//put runToken back
 					j.runToken <- struct{}{}
 				}()
-			case <-j.returnSignal:
-				if j.afCloseFn != nil {
-					defer func() {
-						if err := recover(); err != nil {
-							//record panic
-							var ErrStr string
-							switch e := err.(type) {
-							case string:
-								ErrStr = e
-							case runtime.Error:
-								ErrStr = e.Error()
-							case error:
-								ErrStr = e.Error()
-							default:
-								ErrStr = "recovered (default) panic"
-							}
-							j.jobMgr.recordPanicStack(j.JobName, ErrStr, string(debug.Stack()))
-						}
-					}()
-					j.afCloseFn(j)
-				}
-				j.jobMgr.AllJobs.Delete(j.JobId)
-				return
 			}
 		}
 	}()
 	j.runToken <- struct{}{}
+	return j
+}
+
+func (j *Job) Stop() {
+	if j.cancel != nil {
+		j.cancel()
+	}
 }
 
 //runOneCycle the job will stop if return false
 func (j *Job) runOneCycle() bool {
-	if j.Status == STATUS_CLOSING {
-		return false
-	}
 	if j.chkContinueFn != nil && !j.chkContinueFn(j) {
 		return false
 	}
@@ -172,15 +158,38 @@ func (j *Job) runOneCycle() bool {
 	//this cycle finish
 	j.Status = STATUS_WAITING
 	j.Cycles++
-	if j.TargetCycles > 0 && j.Cycles >= j.TargetCycles {
-		return false
-	}
-	if j.Status == STATUS_CLOSING {
-		return false
-	}
-	if j.chkContinueFn != nil && !j.chkContinueFn(j) {
-		return false
+	return true
+}
+
+func handlePanicStack(panicStr string, stack string) *PanicInfoInst {
+
+	errorsInfo := []string{panicStr}
+	errstr := panicStr
+
+	errorsInfo = append(errorsInfo, "last err unix-time:"+strconv.FormatInt(time.Now().Unix(), 10))
+
+	lines := strings.Split(stack, "\n")
+	maxlines := len(lines)
+	if maxlines >= 100 {
+		maxlines = 100
 	}
 
-	return true
+	if maxlines >= 3 {
+		for i := 2; i < maxlines; i = i + 2 {
+			fomatstr := strings.ReplaceAll(lines[i], "	", "")
+			errstr = errstr + "#" + fomatstr
+			errorsInfo = append(errorsInfo, fomatstr)
+		}
+	}
+
+	h := md5.New()
+	h.Write([]byte(errstr))
+	errhash := hex.EncodeToString(h.Sum(nil))
+
+	panicInfo := &PanicInfoInst{
+		ErrHash:  errhash,
+		ErrorStr: errorsInfo,
+	}
+
+	return panicInfo
 }
