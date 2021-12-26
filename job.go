@@ -23,6 +23,8 @@ type RunType string
 const (
 	STATUS_RUNNING RunType = "running"
 	STATUS_WAITING RunType = "waiting"
+	STATUS_FAILED  RunType = "failed"
+	STATUS_DONE    RunType = "done"
 )
 
 const PANIC_REDO_SECS = 30
@@ -45,11 +47,10 @@ type Job struct {
 	CreateTime  int64
 	LastRuntime int64
 	Status      RunType
-	Cycles      int64
+	Cycles      uint64
 
 	//signal channel
-	runToken   chan struct{}
-	stopSignal chan struct{}
+	runChannel chan struct{}
 }
 
 type PanicInfoInst struct {
@@ -57,7 +58,7 @@ type PanicInfoInst struct {
 	ErrorStr []string
 }
 
-func StartLoopJob(processFn func(), onPanic func(panicInfo *PanicInfoInst), interval int64, jobType JobType, chkContinueFn func(*Job) bool, afCloseFn func(*Job)) *Job {
+func Start(processFn func(), onPanic func(panicInfo *PanicInfoInst), interval int64, jobType JobType, chkContinueFn func(*Job) bool, afCloseFn func(*Job)) *Job {
 	ctx, cancel := context.WithCancel(context.Background())
 	j := &Job{
 		Interval:      interval,
@@ -71,7 +72,7 @@ func StartLoopJob(processFn func(), onPanic func(panicInfo *PanicInfoInst), inte
 		CreateTime:    time.Now().Unix(),
 		LastRuntime:   0,
 		Status:        STATUS_WAITING,
-		runToken:      make(chan struct{}),
+		runChannel:    make(chan struct{}),
 	}
 
 	go func() {
@@ -82,33 +83,22 @@ func StartLoopJob(processFn func(), onPanic func(panicInfo *PanicInfoInst), inte
 					afCloseFn(j)
 				}
 				return // returning not to leak the goroutine
-			case <-j.runToken:
+			case <-j.runChannel:
 				go func() {
 					// if panic happen
 					defer func() {
 						if err := recover(); err != nil {
-							//record panic
-							var errStr string
-							switch e := err.(type) {
-							case string:
-								errStr = e
-							case runtime.Error:
-								errStr = e.Error()
-							case error:
-								errStr = e.Error()
-							default:
-								errStr = "recovered (default) panic"
-							}
 
 							if onPanic != nil {
-								onPanic(handlePanicStack(errStr, string(debug.Stack())))
+								onPanic(handlePanicStack(err))
 							}
 							//check redo
 							if j.JobType == TYPE_PANIC_REDO {
 								j.Status = STATUS_WAITING
 								time.Sleep(PANIC_REDO_SECS * time.Second)
-								j.runToken <- struct{}{}
+								j.runChannel <- struct{}{}
 							} else {
+								j.Status = STATUS_FAILED
 								cancel()
 							}
 						}
@@ -127,17 +117,17 @@ func StartLoopJob(processFn func(), onPanic func(panicInfo *PanicInfoInst), inte
 					if toSleepSecs > 0 {
 						time.Sleep(time.Duration(toSleepSecs) * time.Second)
 					}
-					//put runToken back
-					j.runToken <- struct{}{}
+					//put runChannel back
+					j.runChannel <- struct{}{}
 				}()
 			}
 		}
 	}()
-	j.runToken <- struct{}{}
+	j.runChannel <- struct{}{}
 	return j
 }
 
-func (j *Job) Stop() {
+func (j *Job) Cancel() {
 	if j.cancel != nil {
 		j.cancel()
 	}
@@ -146,6 +136,7 @@ func (j *Job) Stop() {
 //runOneCycle the job will stop if return false
 func (j *Job) runOneCycle() bool {
 	if j.chkContinueFn != nil && !j.chkContinueFn(j) {
+		j.Status = STATUS_DONE
 		return false
 	}
 
@@ -161,7 +152,21 @@ func (j *Job) runOneCycle() bool {
 	return true
 }
 
-func handlePanicStack(panicStr string, stack string) *PanicInfoInst {
+func handlePanicStack(err interface{}) *PanicInfoInst {
+	//record panic
+	var panicStr string
+	switch e := err.(type) {
+	case string:
+		panicStr = e
+	case runtime.Error:
+		panicStr = e.Error()
+	case error:
+		panicStr = e.Error()
+	default:
+		panicStr = "recovered (default) panic"
+	}
+
+	stack := string(debug.Stack())
 
 	errorsInfo := []string{panicStr}
 	errstr := panicStr
