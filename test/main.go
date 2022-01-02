@@ -7,9 +7,9 @@ import (
 	"github.com/universe-30/UJob"
 )
 
-func div(a, b int) int {
-	return a / b
-}
+// func div(a, b int) int {
+// 	return a / b
+// }
 
 func main() {
 	count := 0
