@@ -1,7 +1,6 @@
 package UJob
 
 import (
-	"context"
 	"sync"
 	"time"
 )
@@ -28,9 +27,6 @@ type Job struct {
 	//manual init data
 	Interval int64
 	JobType  JobType
-
-	ctx    context.Context
-	cancel context.CancelFunc
 
 	//callback
 	processFn     func()

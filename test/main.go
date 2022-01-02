@@ -21,9 +21,9 @@ func main() {
 			log.Println(count)
 
 			//example, panic here
-			if count == 6 {
-				div(3, 0)
-			}
+			//if count == 6 {
+			//	div(3, 0)
+			//}
 		},
 		// onPanic callback, run if panic happened
 		func(err interface{}) {
@@ -50,10 +50,10 @@ func main() {
 	_ = job
 
 	// if you want to stop job, use job.Cancel()
-	//go func() {
-	//	time.Sleep(10 * time.Second)
-	//	job.Cancel()
-	//}()
+	go func() {
+		time.Sleep(10 * time.Second)
+		job.Cancel()
+	}()
 
 	time.Sleep(1 * time.Hour)
 }
