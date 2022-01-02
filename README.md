@@ -1,13 +1,7 @@
 # UJob
 
-### UJob can be rebooted using Panic_Redo type
-
-### !!important : Don't write your own go routine inside job 
-
-### how to use
-```go
-import "github.com/universe-30/UJob"
-```
+### UJob will be auto restared using Panic_Redo type
+### !!important : Don't write your own go-routine inside job function
 
 ### example
 ```go
@@ -30,7 +24,6 @@ func main() {
 		func() {
 			count++
 			log.Println(count)
-			
 			//example, panic here
 			if count==6 {
 				div(3,0)
@@ -41,21 +34,20 @@ func main() {
 			log.Println("panic catch")
 			log.Println(err)
 		},
-		// job interval
+		// job interval in seconds
 		2, 
 		// job type 
 		// UJob.TYPE_PANIC_REDO  auto restart if panic
 		// UJob.TYPE_PANIC_RETURN  stop if panic
 		UJob.TYPE_PANIC_REDO,
-		// check continue callback, the job will stop running if return false
 		// the job will keep running if this callback is nil
+		// check continue callback, the job will stop running if return false
 		func(job *UJob.Job) bool {
-			
 			return true
 		}, 
-		// onFinish callback
+		// finally callback
 		func(inst *UJob.Job) {
-			log.Println("finish", "cycle", inst.Cycles)
+			log.Println("finally", "cycle", inst.Cycles)
 		},
 	)
 

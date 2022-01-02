@@ -47,6 +47,12 @@ type Job struct {
 }
 
 func Start(processFn func(), onPanic func(panic_err interface{}), intervalSecs int64, jobType JobType, chkContinueFn func(*Job) bool, finalFn func(*Job)) *Job {
+
+	//min interval is 1 second
+	if intervalSecs <= 0 {
+		intervalSecs = 1
+	}
+
 	j := &Job{
 		Interval:      intervalSecs,
 		JobType:       jobType,

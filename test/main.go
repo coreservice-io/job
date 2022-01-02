@@ -30,7 +30,7 @@ func main() {
 			log.Println("panic catch")
 			log.Println(err)
 		},
-		// job interval
+		// job interval in seconds
 		2,
 		// job type
 		// UJob.TYPE_PANIC_REDO  auto restart if panic
