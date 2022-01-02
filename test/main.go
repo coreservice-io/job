@@ -52,7 +52,7 @@ func main() {
 	// if you want to stop job, use job.Cancel()
 	go func() {
 		time.Sleep(10 * time.Second)
-		job.Cancel()
+		job.SetToCancel()
 	}()
 
 	time.Sleep(1 * time.Hour)

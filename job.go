@@ -1,7 +1,6 @@
 package UJob
 
 import (
-	"sync"
 	"time"
 )
 
@@ -40,37 +39,39 @@ type Job struct {
 	Status      RunType
 	Cycles      uint64
 
+	ToCancel bool
+
 	//signal channel
-	runChannel  chan struct{}
-	stopChannel chan struct{}
-	//stop flag
-	stopSignal     bool
-	stopSignalLock sync.RWMutex
+	runChannel    chan struct{}
+	returnChannel chan struct{}
 }
 
-func Start(processFn func(), onPanic func(err interface{}), interval int64, jobType JobType, chkContinueFn func(*Job) bool, afCloseFn func(*Job)) *Job {
+func Start(processFn func(), onPanic func(err interface{}), intervalSecs int64, jobType JobType, chkContinueFn func(*Job) bool, finalFn func(*Job)) *Job {
 	j := &Job{
-		Interval:      interval,
+		Interval:      intervalSecs,
 		JobType:       jobType,
 		processFn:     processFn,
 		chkContinueFn: chkContinueFn,
-		afCloseFn:     afCloseFn,
+		afCloseFn:     finalFn,
 		onPanic:       onPanic,
 		CreateTime:    time.Now().Unix(),
 		LastRuntime:   0,
 		Status:        STATUS_WAITING,
+		ToCancel:      false,
 		runChannel:    make(chan struct{}),
-		stopChannel:   make(chan struct{}),
+		returnChannel: make(chan struct{}),
 	}
 
 	go func() {
+
 		for {
 			select {
-			case <-j.stopChannel:
-				if afCloseFn != nil {
-					afCloseFn(j)
+			case <-j.returnChannel:
+				if finalFn != nil {
+					finalFn(j)
 				}
 				return
+
 			case <-j.runChannel:
 				go func() {
 					// if panic happen
@@ -86,68 +87,52 @@ func Start(processFn func(), onPanic func(err interface{}), interval int64, jobT
 								j.runChannel <- struct{}{}
 							} else {
 								j.Status = STATUS_FAILED
-								j.stopChannel <- struct{}{}
+								j.returnChannel <- struct{}{}
 							}
 						}
 					}()
 
-					//check stop flag
-					if j.getStopSignal() {
+					//one cycle process
+					if j.chkContinueFn != nil && !j.chkContinueFn(j) {
 						j.Status = STATUS_DONE
-						j.stopChannel <- struct{}{}
+						j.returnChannel <- struct{}{}
 						return
+					} else {
+						//do the job
+						j.Status = STATUS_RUNNING
+						j.LastRuntime = time.Now().Unix()
+						j.processFn()
+						j.Status = STATUS_WAITING
+						j.Cycles++
+
+						//check continue again ! important!
+						if j.chkContinueFn != nil && !j.chkContinueFn(j) {
+							j.Status = STATUS_DONE
+							j.returnChannel <- struct{}{}
+							return
+						}
+
+						//check next run time
+						nowUnixTime := time.Now().Unix()
+						toSleepSecs := j.LastRuntime + j.Interval - nowUnixTime
+						if toSleepSecs > 0 {
+							time.Sleep(time.Duration(toSleepSecs) * time.Second)
+						}
+						//one more cycle
+						j.runChannel <- struct{}{}
 					}
 
-					//do job
-					isGoOn := j.runOneCycle()
-					if !isGoOn {
-						j.stopChannel <- struct{}{}
-						return
-					}
-
-					//check next run time
-					nowUnixTime := time.Now().Unix()
-					toSleepSecs := j.LastRuntime + j.Interval - nowUnixTime
-					if toSleepSecs > 0 {
-						time.Sleep(time.Duration(toSleepSecs) * time.Second)
-					}
-					//put runChannel back
-					j.runChannel <- struct{}{}
 				}()
 			}
 		}
+
 	}()
+
 	j.runChannel <- struct{}{}
 	return j
 }
 
-func (j *Job) Cancel() {
-	j.stopSignalLock.Lock()
-	defer j.stopSignalLock.Unlock()
-	j.stopSignal = true
-}
-
-func (j *Job) getStopSignal() bool {
-	j.stopSignalLock.RLock()
-	defer j.stopSignalLock.RUnlock()
-	return j.stopSignal
-}
-
-//runOneCycle the job will stop if return false
-func (j *Job) runOneCycle() bool {
-	if j.chkContinueFn != nil && !j.chkContinueFn(j) {
-		j.Status = STATUS_DONE
-		return false
-	}
-
-	j.LastRuntime = time.Now().Unix()
-	j.Status = STATUS_RUNNING
-
-	//run
-	j.processFn()
-
-	//this cycle finish
-	j.Status = STATUS_WAITING
-	j.Cycles++
-	return true
+//when SetToCancel() is called the job will not continue after finishing current round
+func (j *Job) SetToCancel() {
+	j.ToCancel = true
 }
