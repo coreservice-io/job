@@ -93,7 +93,7 @@ func Start(processFn func(), onPanic func(panic_err interface{}), intervalSecs i
 					}()
 
 					//one cycle process
-					if j.chkContinueFn != nil && !j.chkContinueFn(j) {
+					if j.ToCancel || (j.chkContinueFn != nil && !j.chkContinueFn(j)) {
 						j.Status = STATUS_DONE
 						j.returnChannel <- struct{}{}
 						return
@@ -106,7 +106,7 @@ func Start(processFn func(), onPanic func(panic_err interface{}), intervalSecs i
 						j.Cycles++
 
 						//check continue again ! important!
-						if j.chkContinueFn != nil && !j.chkContinueFn(j) {
+						if j.ToCancel || (j.chkContinueFn != nil && !j.chkContinueFn(j)) {
 							j.Status = STATUS_DONE
 							j.returnChannel <- struct{}{}
 							return
