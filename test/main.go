@@ -26,12 +26,9 @@ func main() {
 			}
 		},
 		// onPanic callback, run if panic happened
-		func(panicInfo *UJob.PanicInfoInst) {
+		func(err interface{}) {
 			log.Println("panic catch")
-			log.Println(panicInfo.ErrHash)
-			for _, v := range panicInfo.ErrorStr {
-				log.Println(v)
-			}
+			log.Println(err)
 		},
 		// job interval
 		2,
@@ -50,12 +47,13 @@ func main() {
 			log.Println("finish", "cycle", inst.Cycles)
 		},
 	)
+	_ = job
 
 	// if you want to stop job, use job.Cancel()
-	go func() {
-		time.Sleep(10 * time.Second)
-		job.Cancel()
-	}()
+	//go func() {
+	//	time.Sleep(10 * time.Second)
+	//	job.Cancel()
+	//}()
 
 	time.Sleep(1 * time.Hour)
 }

@@ -37,12 +37,9 @@ func main() {
 			}
 		},
 		// onPanic callback, run if panic happened
-		func(panicInfo *UJob.PanicInfoInst) {
+		func(err interface{}) {
 			log.Println("panic catch")
-			log.Println(panicInfo.ErrHash)
-			for _, v := range panicInfo.ErrorStr {
-				log.Println(v)
-			}
+			log.Println(err)
 		},
 		// job interval
 		2, 

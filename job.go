@@ -2,12 +2,7 @@ package UJob
 
 import (
 	"context"
-	"crypto/md5"
-	"encoding/hex"
-	"runtime"
-	"runtime/debug"
-	"strconv"
-	"strings"
+	"sync"
 	"time"
 )
 
@@ -41,7 +36,7 @@ type Job struct {
 	processFn     func()
 	chkContinueFn func(job *Job) bool
 	afCloseFn     func(job *Job)
-	onPanic       func(panicInfo *PanicInfoInst)
+	onPanic       func(err interface{})
 
 	//update data in running
 	CreateTime  int64
@@ -50,21 +45,17 @@ type Job struct {
 	Cycles      uint64
 
 	//signal channel
-	runChannel chan struct{}
+	runChannel  chan struct{}
+	stopChannel chan struct{}
+	//stop flag
+	stopSignal     bool
+	stopSignalLock sync.RWMutex
 }
 
-type PanicInfoInst struct {
-	ErrHash  string
-	ErrorStr []string
-}
-
-func Start(processFn func(), onPanic func(panicInfo *PanicInfoInst), interval int64, jobType JobType, chkContinueFn func(*Job) bool, afCloseFn func(*Job)) *Job {
-	ctx, cancel := context.WithCancel(context.Background())
+func Start(processFn func(), onPanic func(err interface{}), interval int64, jobType JobType, chkContinueFn func(*Job) bool, afCloseFn func(*Job)) *Job {
 	j := &Job{
 		Interval:      interval,
 		JobType:       jobType,
-		ctx:           ctx,
-		cancel:        cancel,
 		processFn:     processFn,
 		chkContinueFn: chkContinueFn,
 		afCloseFn:     afCloseFn,
@@ -73,24 +64,24 @@ func Start(processFn func(), onPanic func(panicInfo *PanicInfoInst), interval in
 		LastRuntime:   0,
 		Status:        STATUS_WAITING,
 		runChannel:    make(chan struct{}),
+		stopChannel:   make(chan struct{}),
 	}
 
 	go func() {
 		for {
 			select {
-			case <-ctx.Done():
+			case <-j.stopChannel:
 				if afCloseFn != nil {
 					afCloseFn(j)
 				}
-				return // returning not to leak the goroutine
+				return
 			case <-j.runChannel:
 				go func() {
 					// if panic happen
 					defer func() {
 						if err := recover(); err != nil {
-
 							if onPanic != nil {
-								onPanic(handlePanicStack(err))
+								onPanic(err)
 							}
 							//check redo
 							if j.JobType == TYPE_PANIC_REDO {
@@ -99,15 +90,22 @@ func Start(processFn func(), onPanic func(panicInfo *PanicInfoInst), interval in
 								j.runChannel <- struct{}{}
 							} else {
 								j.Status = STATUS_FAILED
-								cancel()
+								j.stopChannel <- struct{}{}
 							}
 						}
 					}()
 
+					//check stop flag
+					if j.getStopSignal() {
+						j.Status = STATUS_DONE
+						j.stopChannel <- struct{}{}
+						return
+					}
+
 					//do job
 					isGoOn := j.runOneCycle()
 					if !isGoOn {
-						cancel()
+						j.stopChannel <- struct{}{}
 						return
 					}
 
@@ -128,9 +126,15 @@ func Start(processFn func(), onPanic func(panicInfo *PanicInfoInst), interval in
 }
 
 func (j *Job) Cancel() {
-	if j.cancel != nil {
-		j.cancel()
-	}
+	j.stopSignalLock.Lock()
+	defer j.stopSignalLock.Unlock()
+	j.stopSignal = true
+}
+
+func (j *Job) getStopSignal() bool {
+	j.stopSignalLock.RLock()
+	defer j.stopSignalLock.RUnlock()
+	return j.stopSignal
 }
 
 //runOneCycle the job will stop if return false
@@ -150,51 +154,4 @@ func (j *Job) runOneCycle() bool {
 	j.Status = STATUS_WAITING
 	j.Cycles++
 	return true
-}
-
-func handlePanicStack(err interface{}) *PanicInfoInst {
-	//record panic
-	var panicStr string
-	switch e := err.(type) {
-	case string:
-		panicStr = e
-	case runtime.Error:
-		panicStr = e.Error()
-	case error:
-		panicStr = e.Error()
-	default:
-		panicStr = "recovered (default) panic"
-	}
-
-	stack := string(debug.Stack())
-
-	errorsInfo := []string{panicStr}
-	errstr := panicStr
-
-	errorsInfo = append(errorsInfo, "last err unix-time:"+strconv.FormatInt(time.Now().Unix(), 10))
-
-	lines := strings.Split(stack, "\n")
-	maxlines := len(lines)
-	if maxlines >= 100 {
-		maxlines = 100
-	}
-
-	if maxlines >= 3 {
-		for i := 2; i < maxlines; i = i + 2 {
-			fomatstr := strings.ReplaceAll(lines[i], "	", "")
-			errstr = errstr + "#" + fomatstr
-			errorsInfo = append(errorsInfo, fomatstr)
-		}
-	}
-
-	h := md5.New()
-	h.Write([]byte(errstr))
-	errhash := hex.EncodeToString(h.Sum(nil))
-
-	panicInfo := &PanicInfoInst{
-		ErrHash:  errhash,
-		ErrorStr: errorsInfo,
-	}
-
-	return panicInfo
 }
