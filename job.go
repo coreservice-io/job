@@ -30,7 +30,7 @@ type Job struct {
 	//callback
 	processFn     func()
 	chkContinueFn func(job *Job) bool
-	afCloseFn     func(job *Job)
+	finalFn       func(job *Job)
 	onPanic       func(err interface{})
 
 	//update data in running
@@ -52,7 +52,7 @@ func Start(processFn func(), onPanic func(panic_err interface{}), intervalSecs i
 		JobType:       jobType,
 		processFn:     processFn,
 		chkContinueFn: chkContinueFn,
-		afCloseFn:     finalFn,
+		finalFn:       finalFn,
 		onPanic:       onPanic,
 		CreateTime:    time.Now().Unix(),
 		LastRuntime:   0,
