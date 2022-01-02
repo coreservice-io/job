@@ -46,7 +46,7 @@ type Job struct {
 	returnChannel chan struct{}
 }
 
-func Start(processFn func(), onPanic func(err interface{}), intervalSecs int64, jobType JobType, chkContinueFn func(*Job) bool, finalFn func(*Job)) *Job {
+func Start(processFn func(), onPanic func(panic_err interface{}), intervalSecs int64, jobType JobType, chkContinueFn func(*Job) bool, finalFn func(*Job)) *Job {
 	j := &Job{
 		Interval:      intervalSecs,
 		JobType:       jobType,
