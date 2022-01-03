@@ -39,7 +39,6 @@ func main() {
 		// check continue callback, the job will stop running if return false
 		// the job will keep running if this callback is nil
 		func(job *UJob.Job) bool {
-
 			return true
 		},
 		// onFinish callback
@@ -49,7 +48,8 @@ func main() {
 	)
 	_ = job
 
-	// if you want to stop job, use job.Cancel()
+	// if you want to stop job, use job.SetToCancel()
+	// after the job finish the current loop it will quit and call the finalFn function
 	go func() {
 		time.Sleep(10 * time.Second)
 		job.SetToCancel()

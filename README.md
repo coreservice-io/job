@@ -5,6 +5,8 @@
 
 ### example
 ```go
+package main
+
 import (
 	"log"
 	"time"
@@ -12,9 +14,9 @@ import (
 	"github.com/universe-30/UJob"
 )
 
-func div(a, b int) int {
-	return a / b
-}
+// func div(a, b int) int {
+// 	return a / b
+// }
 
 func main() {
 	count := 0
@@ -24,10 +26,11 @@ func main() {
 		func() {
 			count++
 			log.Println(count)
+
 			//example, panic here
-			if count==6 {
-				div(3,0)
-			}
+			//if count == 6 {
+			//	div(3, 0)
+			//}
 		},
 		// onPanic callback, run if panic happened
 		func(err interface{}) {
@@ -35,29 +38,33 @@ func main() {
 			log.Println(err)
 		},
 		// job interval in seconds
-		2, 
-		// job type 
+		2,
+		// job type
 		// UJob.TYPE_PANIC_REDO  auto restart if panic
 		// UJob.TYPE_PANIC_RETURN  stop if panic
 		UJob.TYPE_PANIC_REDO,
-		// the job will keep running if this callback is nil
 		// check continue callback, the job will stop running if return false
+		// the job will keep running if this callback is nil
 		func(job *UJob.Job) bool {
 			return true
-		}, 
-		// finally callback
+		},
+		// onFinish callback
 		func(inst *UJob.Job) {
-			log.Println("finally", "cycle", inst.Cycles)
+			log.Println("finish", "cycle", inst.Cycles)
 		},
 	)
+	_ = job
 
-	// if you want to stop job, use job.Cancel()
+	// if you want to stop job, use job.SetToCancel()
+	// after the job finish the current loop it will quit and call the finalFn function
 	go func() {
 		time.Sleep(10 * time.Second)
-		job.Cancel()
+		job.SetToCancel()
 	}()
 
 	time.Sleep(1 * time.Hour)
 }
+
+
 
 ```
