@@ -24,6 +24,7 @@ const PANIC_REDO_SECS = 30
 
 type Job struct {
 	//manual init data
+	Name     string
 	Interval int64
 	JobType  JobType
 
@@ -34,10 +35,12 @@ type Job struct {
 	onPanic       func(err interface{})
 
 	//update data in running
-	CreateTime  int64
-	LastRuntime int64
-	Status      RunType
-	Cycles      uint64
+	CreateTime    int64
+	LastRuntime   int64
+	Status        RunType
+	Cycles        uint64
+	LastPanicTime int64
+	PanicCount    int64
 
 	ToCancel bool
 
@@ -46,7 +49,7 @@ type Job struct {
 	returnChannel chan struct{}
 }
 
-func Start(processFn func(), onPanic func(panic_err interface{}), intervalSecs int64, jobType JobType, chkContinueFn func(*Job) bool, finalFn func(*Job)) *Job {
+func Start(name string, processFn func(), onPanic func(panic_err interface{}), intervalSecs int64, jobType JobType, chkContinueFn func(*Job) bool, finalFn func(*Job)) *Job {
 
 	//min interval is 1 second
 	if intervalSecs <= 0 {
@@ -54,6 +57,7 @@ func Start(processFn func(), onPanic func(panic_err interface{}), intervalSecs i
 	}
 
 	j := &Job{
+		Name:          name,
 		Interval:      intervalSecs,
 		JobType:       jobType,
 		processFn:     processFn,
@@ -83,6 +87,8 @@ func Start(processFn func(), onPanic func(panic_err interface{}), intervalSecs i
 					// if panic happen
 					defer func() {
 						if err := recover(); err != nil {
+							j.LastPanicTime = time.Now().Unix()
+							j.PanicCount++
 							if onPanic != nil {
 								onPanic(err)
 							}
