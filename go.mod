@@ -1,3 +1,3 @@
-module github.com/universe-30/UJob
+module github.com/coreservice-io/UJob
 
 go 1.17

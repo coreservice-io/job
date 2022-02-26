@@ -4,7 +4,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/universe-30/UJob"
+	"github.com/coreservice-io/UJob"
 )
 
 // func div(a, b int) int {
@@ -15,6 +15,7 @@ func main() {
 	count := 0
 	// start a loop job
 	job := UJob.Start(
+		"job name",
 		// job process
 		func() {
 			count++

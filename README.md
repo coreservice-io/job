@@ -11,7 +11,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/universe-30/UJob"
+	"github.com/coreservice-io/UJob"
 )
 
 // func div(a, b int) int {
