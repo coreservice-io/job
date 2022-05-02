@@ -1,6 +1,6 @@
-# UJob
+# job
 
-### UJob will be auto restared using Panic_Redo type
+### job will be auto restared using Panic_Redo type
 ### !!important : Don't write your own go-routine inside job function
 
 ### example
@@ -11,7 +11,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/coreservice-io/UJob"
+	"github.com/coreservice-io/job"
 )
 
 // func div(a, b int) int {
@@ -21,7 +21,7 @@ import (
 func main() {
 	count := 0
 	// start a loop job
-	job := UJob.Start(
+	job := job.Start(
 		// job process
 		func() {
 			count++
@@ -40,16 +40,16 @@ func main() {
 		// job interval in seconds
 		2,
 		// job type
-		// UJob.TYPE_PANIC_REDO  auto restart if panic
-		// UJob.TYPE_PANIC_RETURN  stop if panic
-		UJob.TYPE_PANIC_REDO,
+		// job.TYPE_PANIC_REDO  auto restart if panic
+		// job.TYPE_PANIC_RETURN  stop if panic
+		job.TYPE_PANIC_REDO,
 		// check continue callback, the job will stop running if return false
 		// the job will keep running if this callback is nil
-		func(job *UJob.Job) bool {
+		func(job *job.Job) bool {
 			return true
 		},
 		// onFinish callback
-		func(inst *UJob.Job) {
+		func(inst *job.Job) {
 			log.Println("finish", "cycle", inst.Cycles)
 		},
 	)
