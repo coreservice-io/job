@@ -22,14 +22,14 @@ func main() {
 
 	my_data_counter := 0
 	// start a loop job
-	job := job.Start(
+	job_, err := job.Start(
 		"job name",
 		// job type
 		// job.TYPE_PANIC_REDO  auto restart if panic
 		// job.TYPE_PANIC_RETURN  stop if panic
 		job.TYPE_PANIC_REDO,
 		// job interval in seconds
-		2,
+		1,
 		//define you data here ,can be anything
 		&my_data_counter,
 		// check before proces fn , the job will stop running if return false
@@ -58,13 +58,16 @@ func main() {
 			log.Println("finish", "cycle", j.Cycles)
 		},
 	)
-	_ = job
+
+	if err != nil {
+		panic(err)
+	}
 
 	// if you want to stop job, use job.SetToCancel()
 	// after the job finish the current loop it will quit and call the finalFn function
 	go func() {
 		time.Sleep(20 * time.Second)
-		job.SetToCancel()
+		job_.SetToCancel()
 	}()
 
 	time.Sleep(1 * time.Hour)
