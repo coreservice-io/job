@@ -1,6 +1,8 @@
 package job
 
 import (
+	"context"
+	"errors"
 	"time"
 )
 
@@ -11,17 +13,6 @@ const (
 	TYPE_PANIC_RETURN JobType = "panic_return"
 )
 
-type RunType string
-
-const (
-	STATUS_RUNNING RunType = "running"
-	STATUS_WAITING RunType = "waiting"
-	STATUS_FAILED  RunType = "failed"
-	STATUS_DONE    RunType = "done"
-)
-
-const PANIC_REDO_SECS = 30
-
 type Job struct {
 	//manual init data
 	Name     string
@@ -29,101 +20,95 @@ type Job struct {
 	JobType  JobType
 
 	//callback
-	processFn     func()
-	chkContinueFn func(job *Job) bool
-	finalFn       func(job *Job)
-	onPanic       func(err interface{})
+	processFn        func(job *Job)
+	chkBeforeStartFn func(job *Job) bool
+	finalFn          func(job *Job)
+	onPanic          func(job *Job, err interface{})
 
 	//update data in running
 	CreateTime    int64
 	LastRuntime   int64
-	Status        RunType
-	Cycles        uint64
+	Cycles        int64
 	LastPanicTime int64
 	PanicCount    int64
 
-	ToCancel bool
+	context    context.Context
+	CancelFunc context.CancelFunc
 
-	//signal channel
-	runChannel    chan struct{}
-	returnChannel chan struct{}
+	nextRound chan struct{}
+
+	Data interface{}
 }
 
-func Start(name string, processFn func(), onPanic func(panic_err interface{}), intervalSecs int64, jobType JobType, chkContinueFn func(*Job) bool, finalFn func(*Job)) *Job {
+// intervalSecs will be replaced with 1 if <=0
+func Start(name string, jobType JobType, intervalSecs int64, data interface{}, chkBeforeStartFn func(*Job) bool, processFn func(*Job), onPanic func(job *Job, panic_err interface{}), finalFn func(*Job)) (*Job, error) {
+
+	if processFn == nil {
+		return nil, errors.New("processFn nil error")
+	}
 
 	//min interval is 1 second
 	if intervalSecs <= 0 {
-		intervalSecs = 1
+		return nil, errors.New("intervalSecs should >= 1")
 	}
 
+	ctx, cancel_func := context.WithCancel(context.Background())
+
 	j := &Job{
-		Name:          name,
-		Interval:      intervalSecs,
-		JobType:       jobType,
-		processFn:     processFn,
-		chkContinueFn: chkContinueFn,
-		finalFn:       finalFn,
-		onPanic:       onPanic,
-		CreateTime:    time.Now().Unix(),
-		LastRuntime:   0,
-		Status:        STATUS_WAITING,
-		ToCancel:      false,
-		runChannel:    make(chan struct{}),
-		returnChannel: make(chan struct{}),
+		Name:             name,
+		Interval:         intervalSecs,
+		JobType:          jobType,
+		chkBeforeStartFn: chkBeforeStartFn,
+		processFn:        processFn,
+		finalFn:          finalFn,
+		onPanic:          onPanic,
+		CreateTime:       time.Now().Unix(),
+		LastRuntime:      0,
+		Cycles:           0,
+		context:          ctx,
+		CancelFunc:       cancel_func,
+		nextRound:        make(chan struct{}),
+		Data:             data,
 	}
 
 	go func() {
-
 		for {
 			select {
-			case <-j.returnChannel:
+			case <-j.context.Done():
 				if finalFn != nil {
 					finalFn(j)
 				}
 				return
 
-			case <-j.runChannel:
+			case <-j.nextRound:
 				go func() {
 					// if panic happen
 					defer func() {
 						if err := recover(); err != nil {
+							j.addOneCycle() //compensate the err
 							j.LastPanicTime = time.Now().Unix()
 							j.PanicCount++
 							if onPanic != nil {
-								onPanic(err)
+								onPanic(j, err)
 							}
 							//check redo
 							if j.JobType == TYPE_PANIC_REDO {
-								j.Status = STATUS_WAITING
-								time.Sleep(PANIC_REDO_SECS * time.Second)
-								j.runChannel <- struct{}{}
+								j.nextRound <- struct{}{}
 							} else {
-								j.Status = STATUS_FAILED
-								j.returnChannel <- struct{}{}
+								j.CancelFunc()
 							}
 						}
 					}()
-
+					//////////////////
 					//one cycle process
-					if j.ToCancel || (j.chkContinueFn != nil && !j.chkContinueFn(j)) {
-						j.Status = STATUS_DONE
-						j.returnChannel <- struct{}{}
+					if j.chkBeforeStartFn != nil && !j.chkBeforeStartFn(j) {
+						j.CancelFunc()
 						return
 					} else {
 						//do the job
-						j.Status = STATUS_RUNNING
 						j.LastRuntime = time.Now().Unix()
-						j.processFn()
-						j.Status = STATUS_WAITING
-						j.Cycles++
-
-						//check continue again ! important!
-						if j.ToCancel || (j.chkContinueFn != nil && !j.chkContinueFn(j)) {
-							j.Status = STATUS_DONE
-							j.returnChannel <- struct{}{}
-							return
-						}
-
+						j.processFn(j)
+						j.addOneCycle()
 						//check next run time
 						nowUnixTime := time.Now().Unix()
 						toSleepSecs := j.LastRuntime + j.Interval - nowUnixTime
@@ -131,20 +116,25 @@ func Start(name string, processFn func(), onPanic func(panic_err interface{}), i
 							time.Sleep(time.Duration(toSleepSecs) * time.Second)
 						}
 						//one more cycle
-						j.runChannel <- struct{}{}
+						j.nextRound <- struct{}{}
 					}
-
 				}()
 			}
 		}
-
 	}()
 
-	j.runChannel <- struct{}{}
-	return j
+	j.nextRound <- struct{}{}
+	return j, nil
 }
 
-//when SetToCancel() is called the job will not continue after finishing current round
+func (j *Job) addOneCycle() {
+	j.Cycles++
+	if j.Cycles < 0 {
+		j.Cycles = 0
+	}
+}
+
+// when SetToCancel() is called the job will not continue after finishing current round
 func (j *Job) SetToCancel() {
-	j.ToCancel = true
+	j.CancelFunc()
 }
