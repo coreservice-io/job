@@ -32,8 +32,9 @@ type Job struct {
 	LastPanicTime int64
 	PanicCount    int64
 
+	job_ctx    context.Context //job context
 	context    context.Context
-	CancelFunc context.CancelFunc
+	cancelFunc context.CancelFunc
 
 	nextRound chan struct{}
 
@@ -41,7 +42,7 @@ type Job struct {
 }
 
 // intervalSecs will be replaced with 1 if <=0
-func Start(name string, jobType JobType, intervalSecs int64, data interface{}, chkBeforeStartFn func(*Job) bool, processFn func(*Job), onPanic func(job *Job, panic_err interface{}), finalFn func(*Job)) (*Job, error) {
+func Start(job_ctx_ context.Context, name string, jobType JobType, intervalSecs int64, data interface{}, chkBeforeStartFn func(*Job) bool, processFn func(*Job), onPanic func(job *Job, panic_err interface{}), finalFn func(*Job)) (*Job, error) {
 
 	if processFn == nil {
 		return nil, errors.New("processFn nil error")
@@ -65,8 +66,9 @@ func Start(name string, jobType JobType, intervalSecs int64, data interface{}, c
 		CreateTime:       time.Now().Unix(),
 		LastRuntime:      0,
 		Cycles:           0,
+		job_ctx:          job_ctx_,
 		context:          ctx,
-		CancelFunc:       cancel_func,
+		cancelFunc:       cancel_func,
 		nextRound:        make(chan struct{}),
 		Data:             data,
 	}
@@ -74,6 +76,11 @@ func Start(name string, jobType JobType, intervalSecs int64, data interface{}, c
 	go func() {
 		for {
 			select {
+
+			case <-j.job_ctx.Done():
+				j.cancelFunc()
+				continue
+
 			case <-j.context.Done():
 				if finalFn != nil {
 					finalFn(j)
@@ -95,14 +102,14 @@ func Start(name string, jobType JobType, intervalSecs int64, data interface{}, c
 							if j.JobType == TYPE_PANIC_REDO {
 								j.nextRound <- struct{}{}
 							} else {
-								j.CancelFunc()
+								j.cancelFunc()
 							}
 						}
 					}()
 					//////////////////
 					//one cycle process
 					if j.chkBeforeStartFn != nil && !j.chkBeforeStartFn(j) {
-						j.CancelFunc()
+						j.cancelFunc()
 						return
 					} else {
 						//do the job
@@ -132,9 +139,4 @@ func (j *Job) addOneCycle() {
 	if j.Cycles < 0 {
 		j.Cycles = 0
 	}
-}
-
-// when SetToCancel() is called the job will not continue after finishing current round
-func (j *Job) SetToCancel() {
-	j.CancelFunc()
 }
