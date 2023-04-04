@@ -5,9 +5,11 @@
 
 ### example
 ```go
+
 package main
 
 import (
+	"context"
 	"log"
 	"time"
 
@@ -20,9 +22,12 @@ import (
 
 func main() {
 
+	job_ctx, job_cancel := context.WithCancel(context.Background())
+
 	my_data_counter := 0
 	// start a loop job
-	job_, err := job.Start(
+	err := job.Start(
+		job_ctx,
 		"job name",
 		// job type
 		// job.TYPE_PANIC_REDO  auto restart if panic
@@ -67,10 +72,11 @@ func main() {
 	// after the job finish the current loop it will quit and call the finalFn function
 	go func() {
 		time.Sleep(20 * time.Second)
-		job_.SetToCancel()
+		job_cancel()
 	}()
 
 	time.Sleep(1 * time.Hour)
 }
+
 
 ```

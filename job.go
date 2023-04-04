@@ -42,15 +42,15 @@ type Job struct {
 }
 
 // intervalSecs will be replaced with 1 if <=0
-func Start(job_ctx_ context.Context, name string, jobType JobType, intervalSecs int64, data interface{}, chkBeforeStartFn func(*Job) bool, processFn func(*Job), onPanic func(job *Job, panic_err interface{}), finalFn func(*Job)) (*Job, error) {
+func Start(job_ctx_ context.Context, name string, jobType JobType, intervalSecs int64, data interface{}, chkBeforeStartFn func(*Job) bool, processFn func(*Job), onPanic func(job *Job, panic_err interface{}), finalFn func(*Job)) error {
 
 	if processFn == nil {
-		return nil, errors.New("processFn nil error")
+		return errors.New("processFn nil error")
 	}
 
 	//min interval is 1 second
 	if intervalSecs <= 0 {
-		return nil, errors.New("intervalSecs should >= 1")
+		return errors.New("intervalSecs should >= 1")
 	}
 
 	ctx, cancel_func := context.WithCancel(context.Background())
@@ -131,7 +131,7 @@ func Start(job_ctx_ context.Context, name string, jobType JobType, intervalSecs 
 	}()
 
 	j.nextRound <- struct{}{}
-	return j, nil
+	return nil
 }
 
 func (j *Job) addOneCycle() {
