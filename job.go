@@ -75,21 +75,22 @@ func Start(job_ctx_ context.Context, job_conf JobConfig, data interface{}) error
 	ctx, cancel_func := context.WithCancel(context.Background())
 
 	j := &Job{
-		Name:             job_conf.Name,
-		Interval:         job_conf.Interval_secs,
-		JobType:          job_conf.Job_type,
-		chkBeforeStartFn: job_conf.Chk_before_start_fn,
-		processFn:        job_conf.Process_fn,
-		finalFn:          job_conf.Final_fn,
-		onPanic:          job_conf.On_panic,
-		CreateTime:       time.Now().Unix(),
-		LastRuntime:      0,
-		Cycles:           0,
-		job_ctx:          job_ctx_,
-		context:          ctx,
-		cancelFunc:       cancel_func,
-		nextRound:        make(chan struct{}),
-		Data:             data,
+		Name:                  job_conf.Name,
+		Interval:              job_conf.Interval_secs,
+		JobType:               job_conf.Job_type,
+		chkBeforeStartFn:      job_conf.Chk_before_start_fn,
+		processFn:             job_conf.Process_fn,
+		finalFn:               job_conf.Final_fn,
+		onPanic:               job_conf.On_panic,
+		panic_redo_delay_secs: job_conf.Panic_sleep_secs,
+		CreateTime:            time.Now().Unix(),
+		LastRuntime:           0,
+		Cycles:                0,
+		job_ctx:               job_ctx_,
+		context:               ctx,
+		cancelFunc:            cancel_func,
+		nextRound:             make(chan struct{}),
+		Data:                  data,
 	}
 
 	go func() {
@@ -121,6 +122,8 @@ func Start(job_ctx_ context.Context, job_conf JobConfig, data interface{}) error
 							if j.JobType == TYPE_PANIC_REDO {
 								select {
 								case <-j.job_ctx.Done(): //context cancelled
+									j.cancelFunc()
+									return
 								case <-time.After(time.Duration(j.panic_redo_delay_secs) * time.Second): //timeout
 								}
 								j.nextRound <- struct{}{}
@@ -145,6 +148,8 @@ func Start(job_ctx_ context.Context, job_conf JobConfig, data interface{}) error
 						if toSleepSecs > 0 {
 							select {
 							case <-j.job_ctx.Done(): //context cancelled
+								j.cancelFunc()
+								return
 							case <-time.After(time.Duration(toSleepSecs) * time.Second): //timeout
 							}
 						}
