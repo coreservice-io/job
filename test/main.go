@@ -20,40 +20,44 @@ func main() {
 	// start a loop job
 	err := job.Start(
 		job_ctx,
-		"job name",
-		// job type
-		// job.TYPE_PANIC_REDO  auto restart if panic
-		// job.TYPE_PANIC_RETURN  stop if panic
-		job.TYPE_PANIC_REDO,
-		// job interval in seconds
-		1,
+
+		job.JobConfig{
+			Name: "job name",
+			// job type
+			// job.TYPE_PANIC_REDO  auto restart if panic
+			// job.TYPE_PANIC_RETURN  stop if panic
+			Job_type: job.TYPE_PANIC_REDO,
+			// job interval in seconds
+			Interval_secs: 1,
+			// check before proces fn , the job will stop running if return false
+			// the job will bypass if function is nil
+			Chk_before_start_fn: func(job *job.Job) bool {
+				return true
+			},
+			// job process
+			Process_fn: func(j *job.Job) {
+
+				log.Println("count", *j.Data.(*int))
+				log.Println("cycle", j.Cycles)
+				*j.Data.(*int)++
+				//trigger example panic here
+				// if j.Cycles == 6 {
+				// 	div(0, 0)
+				// }
+			},
+			// onPanic callback, run if panic happened
+			On_panic: func(j *job.Job, err interface{}) {
+				log.Println("panic catch", err)
+				time.Sleep(5 * time.Second)
+			},
+			Panic_sleep_secs: 30, // sleep secs before next panic redo ,//you can bypass this to use the default internal value
+			// onFinal callback
+			Final_fn: func(j *job.Job) {
+				log.Println("finish", "cycle", j.Cycles)
+			},
+		},
 		//define you data here ,can be anything
 		&my_data_counter,
-		// check before proces fn , the job will stop running if return false
-		// the job will bypass if function is nil
-		func(job *job.Job) bool {
-			return true
-		},
-		// job process
-		func(j *job.Job) {
-
-			log.Println("count", *j.Data.(*int))
-			log.Println("cycle", j.Cycles)
-			*j.Data.(*int)++
-			//trigger example panic here
-			// if j.Cycles == 6 {
-			// 	div(0, 0)
-			// }
-		},
-		// onPanic callback, run if panic happened
-		func(j *job.Job, err interface{}) {
-			log.Println("panic catch", err)
-			time.Sleep(5 * time.Second)
-		},
-		// onFinal callback
-		func(j *job.Job) {
-			log.Println("finish", "cycle", j.Cycles)
-		},
 	)
 
 	if err != nil {

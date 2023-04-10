@@ -13,6 +13,19 @@ const (
 	TYPE_PANIC_RETURN JobType = "panic_return"
 )
 
+type JobConfig struct {
+	Name                string
+	Job_type            JobType
+	Interval_secs       int64
+	Chk_before_start_fn func(*Job) bool
+	Process_fn          func(*Job)
+	On_panic            func(job *Job, panic_err interface{})
+	Panic_sleep_secs    int64 //how long to sleep before next panic redo
+	Final_fn            func(*Job)
+}
+
+const default_panic_redo_sleep_secs = 30 //sleep 30 secs  before next panic redo
+
 type Job struct {
 	//manual init data
 	Name     string
@@ -32,6 +45,8 @@ type Job struct {
 	LastPanicTime int64
 	PanicCount    int64
 
+	panic_redo_delay_secs int64
+
 	job_ctx    context.Context //job context
 	context    context.Context
 	cancelFunc context.CancelFunc
@@ -42,27 +57,31 @@ type Job struct {
 }
 
 // intervalSecs will be replaced with 1 if <=0
-func Start(job_ctx_ context.Context, name string, jobType JobType, intervalSecs int64, data interface{}, chkBeforeStartFn func(*Job) bool, processFn func(*Job), onPanic func(job *Job, panic_err interface{}), finalFn func(*Job)) error {
+func Start(job_ctx_ context.Context, job_conf JobConfig, data interface{}) error {
 
-	if processFn == nil {
+	if job_conf.Process_fn == nil {
 		return errors.New("processFn nil error")
 	}
 
 	//min interval is 1 second
-	if intervalSecs <= 0 {
+	if job_conf.Interval_secs <= 0 {
 		return errors.New("intervalSecs should >= 1")
+	}
+
+	if job_conf.Panic_sleep_secs <= 0 {
+		job_conf.Panic_sleep_secs = default_panic_redo_sleep_secs
 	}
 
 	ctx, cancel_func := context.WithCancel(context.Background())
 
 	j := &Job{
-		Name:             name,
-		Interval:         intervalSecs,
-		JobType:          jobType,
-		chkBeforeStartFn: chkBeforeStartFn,
-		processFn:        processFn,
-		finalFn:          finalFn,
-		onPanic:          onPanic,
+		Name:             job_conf.Name,
+		Interval:         job_conf.Interval_secs,
+		JobType:          job_conf.Job_type,
+		chkBeforeStartFn: job_conf.Chk_before_start_fn,
+		processFn:        job_conf.Process_fn,
+		finalFn:          job_conf.Final_fn,
+		onPanic:          job_conf.On_panic,
 		CreateTime:       time.Now().Unix(),
 		LastRuntime:      0,
 		Cycles:           0,
@@ -77,15 +96,15 @@ func Start(job_ctx_ context.Context, name string, jobType JobType, intervalSecs 
 		for {
 			select {
 
+			case <-j.context.Done():
+				if j.finalFn != nil {
+					j.finalFn(j)
+				}
+				return
+
 			case <-j.job_ctx.Done():
 				j.cancelFunc()
 				continue
-
-			case <-j.context.Done():
-				if finalFn != nil {
-					finalFn(j)
-				}
-				return
 
 			case <-j.nextRound:
 				go func() {
@@ -95,11 +114,15 @@ func Start(job_ctx_ context.Context, name string, jobType JobType, intervalSecs 
 							j.addOneCycle() //compensate the err
 							j.LastPanicTime = time.Now().Unix()
 							j.PanicCount++
-							if onPanic != nil {
-								onPanic(j, err)
+							if j.onPanic != nil {
+								j.onPanic(j, err)
 							}
 							//check redo
 							if j.JobType == TYPE_PANIC_REDO {
+								select {
+								case <-j.job_ctx.Done(): //context cancelled
+								case <-time.After(time.Duration(j.panic_redo_delay_secs) * time.Second): //timeout
+								}
 								j.nextRound <- struct{}{}
 							} else {
 								j.cancelFunc()
@@ -120,7 +143,10 @@ func Start(job_ctx_ context.Context, name string, jobType JobType, intervalSecs 
 						nowUnixTime := time.Now().Unix()
 						toSleepSecs := j.LastRuntime + j.Interval - nowUnixTime
 						if toSleepSecs > 0 {
-							time.Sleep(time.Duration(toSleepSecs) * time.Second)
+							select {
+							case <-j.job_ctx.Done(): //context cancelled
+							case <-time.After(time.Duration(toSleepSecs) * time.Second): //timeout
+							}
 						}
 						//one more cycle
 						j.nextRound <- struct{}{}
